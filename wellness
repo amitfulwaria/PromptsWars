@@ -1,0 +1,1161 @@
+import { useState, useEffect } from 'react';
+import { 
+  Heart, 
+  BookOpen, 
+  MessageCircle, 
+  BarChart3, 
+  Award, 
+  Target, 
+  Calendar, 
+  Brain,
+  TrendingUp,
+  Zap,
+  Moon,
+  Sun
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell
+} from 'recharts';
+import { format, subDays, parseISO } from 'date-fns';
+import { GeminiService } from './lib/gemini';
+import type { 
+  MoodEntry, 
+  JournalEntry, 
+  WellnessPlan, 
+  Achievement, 
+  ChatMessage, 
+  Tab 
+} from './types';
+
+const MOODS = [
+  { emoji: '😀', label: 'Happy', value: 'happy', color: '#22C55E', bg: 'bg-emerald-100' },
+  { emoji: '🙂', label: 'Calm', value: 'calm', color: '#4ADE80', bg: 'bg-green-100' },
+  { emoji: '😐', label: 'Neutral', value: 'neutral', color: '#A3E635', bg: 'bg-lime-100' },
+  { emoji: '😟', label: 'Anxious', value: 'anxious', color: '#F59E0B', bg: 'bg-amber-100' },
+  { emoji: '😢', label: 'Sad', value: 'sad', color: '#EF4444', bg: 'bg-red-100' },
+  { emoji: '😫', label: 'Burned Out', value: 'burned-out', color: '#8B5CF6', bg: 'bg-violet-100' },
+] as const;
+
+const EMERGENCY_KEYWORDS = ['suicide', 'kill', 'self-harm', 'hopeless', 'die', 'end it'];
+
+function App() {
+  const [currentTab, setCurrentTab] = useState<Tab>('dashboard');
+  const [isDark, setIsDark] = useState(true);
+  const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [wellnessPlans, setWellnessPlans] = useState<WellnessPlan[]>([]);
+  const [achievements, setAchievements] = useState<Achievement[]>([
+    { id: '1', name: 'First Check-in', description: 'Log your first mood', icon: '🌱', unlocked: false },
+    { id: '2', name: '7 Day Streak', description: 'Check-in for 7 days in a row', icon: '🔥', unlocked: false, progress: 0, maxProgress: 7 },
+    { id: '3', name: 'Journal Master', description: 'Write 10 journal entries', icon: '📖', unlocked: false, progress: 0, maxProgress: 10 },
+    { id: '4', name: 'Stress Warrior', description: 'Reduce average stress below 4', icon: '🛡️', unlocked: false },
+    { id: '5', name: 'Mindfulness Champion', description: 'Complete 5 wellness plans', icon: '🧘', unlocked: false },
+  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { 
+      id: '1', 
+      role: 'assistant', 
+      content: "Hi there! I'm your AI wellness coach. How are you feeling today? I'm here to listen, offer support, or guide you through a breathing exercise.", 
+      timestamp: new Date().toISOString() 
+    }
+  ]);
+  const [currentChatInput, setCurrentChatInput] = useState('');
+  const [selectedMood, setSelectedMood] = useState<string>('');
+  const [stressLevel, setStressLevel] = useState(5);
+  const [energyLevel, setEnergyLevel] = useState(6);
+  const [sleepHours, setSleepHours] = useState(7);
+  const [studyHours, setStudyHours] = useState(6);
+  const [journalContent, setJournalContent] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showEmergency, setShowEmergency] = useState(false);
+  const [xp, setXp] = useState(245);
+  const [streak, setStreak] = useState(5);
+  const [burnoutRisk, setBurnoutRisk] = useState<'low' | 'medium' | 'high'>('medium');
+  const [recentInsight, setRecentInsight] = useState("Your energy is highest mid-week. Consider scheduling difficult subjects then.");
+
+  // Load from localStorage
+  useEffect(() => {
+    const savedMoods = localStorage.getItem('mindmate_moods');
+    if (savedMoods) setMoodEntries(JSON.parse(savedMoods));
+
+    const savedJournals = localStorage.getItem('mindmate_journals');
+    if (savedJournals) setJournalEntries(JSON.parse(savedJournals));
+
+    const savedPlans = localStorage.getItem('mindmate_plans');
+    if (savedPlans) setWellnessPlans(JSON.parse(savedPlans));
+
+    const savedXp = localStorage.getItem('mindmate_xp');
+    if (savedXp) setXp(parseInt(savedXp));
+
+    const savedStreak = localStorage.getItem('mindmate_streak');
+    if (savedStreak) setStreak(parseInt(savedStreak));
+  }, []);
+
+  // Save to localStorage
+  useEffect(() => {
+    localStorage.setItem('mindmate_moods', JSON.stringify(moodEntries));
+    localStorage.setItem('mindmate_journals', JSON.stringify(journalEntries));
+    localStorage.setItem('mindmate_plans', JSON.stringify(wellnessPlans));
+    localStorage.setItem('mindmate_xp', xp.toString());
+    localStorage.setItem('mindmate_streak', streak.toString());
+  }, [moodEntries, journalEntries, wellnessPlans, xp, streak]);
+
+  // Simulate initial data
+  useEffect(() => {
+    if (moodEntries.length === 0) {
+      const initialMoods: MoodEntry[] = [
+        { id: '1', timestamp: subDays(new Date(), 0).toISOString(), mood: 'calm', stressLevel: 4, energyLevel: 7, sleepHours: 7.5, studyHours: 5.5 },
+        { id: '2', timestamp: subDays(new Date(), 1).toISOString(), mood: 'neutral', stressLevel: 6, energyLevel: 5, sleepHours: 6, studyHours: 8 },
+        { id: '3', timestamp: subDays(new Date(), 2).toISOString(), mood: 'anxious', stressLevel: 8, energyLevel: 4, sleepHours: 5.5, studyHours: 9 },
+        { id: '4', timestamp: subDays(new Date(), 3).toISOString(), mood: 'happy', stressLevel: 3, energyLevel: 8, sleepHours: 8, studyHours: 4 },
+        { id: '5', timestamp: subDays(new Date(), 4).toISOString(), mood: 'sad', stressLevel: 7, energyLevel: 3, sleepHours: 6.5, studyHours: 7 },
+      ];
+      setMoodEntries(initialMoods);
+
+      const initialJournals: JournalEntry[] = [
+        {
+          id: 'j1',
+          timestamp: subDays(new Date(), 1).toISOString(),
+          content: "I am worried about my NEET preparation. I feel behind everyone even though I study 10 hours a day.",
+          analysis: {
+            primaryEmotion: "Anxious",
+            stressSeverity: 8,
+            burnoutRisk: "high",
+            confidenceScore: 81,
+            summary: "Strong feelings of comparison and inadequacy despite significant effort.",
+            feedback: "Your dedication is impressive. Progress isn't always linear.",
+            suggestions: ["Compare yourself only to your yesterday-self", "Take one full rest day this week", "Talk to a mentor about your prep strategy"],
+            triggers: ["Social comparison", "Perceived lag in syllabus"]
+          }
+        }
+      ];
+      setJournalEntries(initialJournals);
+
+      const initialPlans: WellnessPlan[] = [{
+        id: 'p1',
+        title: "Exam Resilience Builder",
+        description: "Tailored for high-stress preparation phase",
+        tasks: [
+          { title: "Morning breathing: Box breathing 4-4-4-4", duration: "8 min", completed: true },
+          { title: "Pomodoro with movement breaks", duration: "3 cycles", completed: false },
+          { title: "Evening gratitude journal", duration: "10 min", completed: false },
+          { title: "Limit social media to <30 mins", duration: "", completed: true }
+        ],
+        generatedFor: "High anxiety detected"
+      }];
+      setWellnessPlans(initialPlans);
+    }
+  }, [moodEntries.length]);
+
+  // Calculate current burnout risk
+  useEffect(() => {
+    if (moodEntries.length > 0) {
+      GeminiService.predictBurnout(moodEntries).then(result => {
+        setBurnoutRisk(result.risk as any);
+      });
+    }
+  }, [moodEntries]);
+
+  const addXp = (amount: number) => {
+    setXp(prev => Math.min(1000, prev + amount));
+    // Check achievements
+    const newAchievements = [...achievements];
+    const firstCheckin = newAchievements.find(a => a.id === '1');
+    if (firstCheckin && !firstCheckin.unlocked) {
+      firstCheckin.unlocked = true;
+      setAchievements(newAchievements);
+    }
+  };
+
+  const handleMoodSubmit = async () => {
+    if (!selectedMood) return;
+
+    const newEntry: MoodEntry = {
+      id: Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      mood: selectedMood as any,
+      stressLevel,
+      energyLevel,
+      sleepHours,
+      studyHours,
+    };
+
+    const updatedEntries = [newEntry, ...moodEntries];
+    setMoodEntries(updatedEntries);
+    setSelectedMood('');
+
+    // Award XP
+    addXp(10);
+
+    // Simulate AI analysis
+    await GeminiService.analyzeMood(newEntry);
+    
+    // Update streak (simple)
+    if (streak < 12) setStreak(prev => prev + 1);
+
+    // Generate new insight occasionally
+    if (Math.random() > 0.6 && updatedEntries.length > 2) {
+      const generated = GeminiService.generateInsight(updatedEntries);
+      setRecentInsight(generated);
+    }
+
+    // Show toast like feedback
+    const toast = document.createElement('div');
+    toast.className = 'fixed bottom-8 right-8 bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 z-50';
+    toast.innerHTML = `✅ Entry saved. +10 XP • AI analyzed your mood as ${selectedMood}`;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2800);
+  };
+
+  const handleJournalSubmit = async () => {
+    if (!journalContent.trim()) return;
+    
+    setIsAnalyzing(true);
+
+    // Detect emergency
+    const hasEmergency = EMERGENCY_KEYWORDS.some(keyword => 
+      journalContent.toLowerCase().includes(keyword)
+    );
+    setShowEmergency(hasEmergency);
+
+    const analysis = await GeminiService.analyzeJournal(journalContent);
+    
+    const newJournal: JournalEntry = {
+      id: Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      content: journalContent,
+      analysis
+    };
+
+    const updatedJournals = [newJournal, ...journalEntries];
+    setJournalEntries(updatedJournals);
+    setJournalContent('');
+    setIsAnalyzing(false);
+
+    addXp(15);
+
+    // Unlock journal achievement
+    const updatedAchievements = [...achievements];
+    const journalAch = updatedAchievements.find(a => a.id === '3');
+    if (journalAch) {
+      journalAch.progress = (journalAch.progress || 0) + 1;
+      if ((journalAch.progress || 0) >= (journalAch.maxProgress || 10)) {
+        journalAch.unlocked = true;
+      }
+      setAchievements(updatedAchievements);
+    }
+
+    if (hasEmergency) {
+      setCurrentTab('coach');
+    }
+  };
+
+  const sendChatMessage = async () => {
+    if (!currentChatInput.trim()) return;
+
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: currentChatInput,
+      timestamp: new Date().toISOString()
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    const question = currentChatInput;
+    setCurrentChatInput('');
+
+    // Simulate thinking
+    setTimeout(async () => {
+      let responseText = "Thank you for sharing. Remember that consistency in small healthy habits compounds over time.";
+
+      if (question.toLowerCase().includes('breathe') || question.toLowerCase().includes('breath')) {
+        responseText = "Let's do a quick 4-7-8 breathing exercise together:\n\n1. Inhale quietly through your nose for 4 seconds\n2. Hold your breath for 7 seconds\n3. Exhale completely through your mouth for 8 seconds\n\nRepeat 4 times. How do you feel now?";
+      } else if (question.toLowerCase().includes('anxious') || question.toLowerCase().includes('stress')) {
+        responseText = "Exam anxiety is extremely common. Try this reframe: Instead of 'I must get this perfect', try 'I will do my best today and that's enough.' Would you like a guided grounding exercise?";
+      } else if (question.toLowerCase().includes('motivat') || question.toLowerCase().includes('tired')) {
+        responseText = "You're doing something incredibly difficult and important. Even on days where you feel like giving up, showing up is a victory. You've already come so far. What is one small win from this week?";
+      }
+
+      const assistantMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: responseText,
+        timestamp: new Date().toISOString()
+      };
+
+      setChatMessages(prev => [...prev, assistantMessage]);
+      addXp(5);
+    }, 950);
+  };
+
+  const generateNewPlan = async () => {
+    const latestMood = moodEntries[0];
+    if (!latestMood) return;
+
+    const planData = await GeminiService.generateWellnessPlan(latestMood);
+    
+    const newPlan: WellnessPlan = {
+      id: Date.now().toString(),
+      title: planData.title,
+      description: "Generated based on recent mood and journal patterns",
+      tasks: planData.dailyPlan.map((task: string, index: number) => ({
+        title: task,
+        completed: index < 2,
+        duration: index % 2 === 0 ? "10 min" : undefined
+      })),
+      generatedFor: `Based on ${latestMood.mood} mood`
+    };
+
+    setWellnessPlans(prev => [newPlan, ...prev]);
+    addXp(20);
+
+    const toast = document.createElement("div");
+    toast.className = "fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#00DC82] text-black px-8 py-4 rounded-3xl shadow-2xl flex items-center gap-3 font-medium z-[100]";
+    toast.textContent = "✨ New personalized wellness plan generated";
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2200);
+  };
+
+  const toggleTask = (planId: string, taskIndex: number) => {
+    setWellnessPlans(prev => prev.map(plan => {
+      if (plan.id === planId) {
+        const newTasks = [...plan.tasks];
+        newTasks[taskIndex].completed = !newTasks[taskIndex].completed;
+        return { ...plan, tasks: newTasks };
+      }
+      return plan;
+    }));
+  };
+
+  // Prepare chart data
+  const moodTrendData = moodEntries.slice(0, 7).reverse().map((entry) => {
+    const moodScore = {
+      happy: 95, calm: 80, neutral: 65, anxious: 40, sad: 25, 'burned-out': 15
+    }[entry.mood] || 50;
+    
+    return {
+      day: format(parseISO(entry.timestamp), 'EEE'),
+      moodScore,
+      stress: entry.stressLevel,
+      energy: entry.energyLevel,
+      date: format(parseISO(entry.timestamp), 'dd MMM')
+    };
+  });
+
+  const moodDistribution = [
+    { name: 'Happy', value: moodEntries.filter(m => m.mood === 'happy').length || 1, color: '#22C55E' },
+    { name: 'Calm', value: moodEntries.filter(m => m.mood === 'calm').length || 2, color: '#4ADE80' },
+    { name: 'Neutral', value: moodEntries.filter(m => m.mood === 'neutral').length || 3, color: '#eab308' },
+    { name: 'Anxious', value: moodEntries.filter(m => m.mood === 'anxious').length || 4, color: '#f97316' },
+    { name: 'Sad/Burned', value: moodEntries.filter(m => ['sad','burned-out'].includes(m.mood)).length || 2, color: '#a855f7' },
+  ];
+
+  const avgStress = moodEntries.length > 0 
+    ? Math.round(moodEntries.reduce((sum, entry) => sum + entry.stressLevel, 0) / moodEntries.length) 
+    : 5;
+
+  const avgSleep = moodEntries.length > 0 
+    ? (moodEntries.reduce((sum, entry) => sum + entry.sleepHours, 0) / moodEntries.length).toFixed(1) 
+    : '7.2';
+
+  const getMoodEmoji = (mood: string) => {
+    const found = MOODS.find(m => m.value === mood);
+    return found ? found.emoji : '😐';
+  };
+
+  return (
+    <div className={`min-h-screen ${isDark ? 'dark bg-[#0F172A] text-white' : 'bg-zinc-50 text-slate-900'}`}>
+      <div className="flex h-screen overflow-hidden">
+        {/* Sidebar */}
+        <div className="w-72 bg-slate-950 border-r border-white/10 flex flex-col">
+          <div className="p-6 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#00DC82] to-emerald-400 flex items-center justify-center shadow-inner">
+                <Brain className="w-6 h-6 text-slate-950" />
+              </div>
+              <div>
+                <div className="font-bold text-3xl tracking-tighter text-white">mindmate</div>
+                <div className="text-[10px] text-emerald-400 -mt-1 font-mono">AI WELLNESS</div>
+              </div>
+            </div>
+            <div className="mt-6 text-xs uppercase tracking-[1px] text-slate-400 font-medium">Student Edition</div>
+          </div>
+
+          <div className="flex-1 px-3 py-6 space-y-1">
+            {[
+              { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+              { id: 'checkin', label: 'Daily Check-in', icon: Heart },
+              { id: 'journal', label: 'Emotional Journal', icon: BookOpen },
+              { id: 'coach', label: 'AI Coach', icon: MessageCircle },
+              { id: 'analytics', label: 'Deep Analytics', icon: TrendingUp },
+              { id: 'plans', label: 'Wellness Plans', icon: Target },
+              { id: 'achievements', label: 'Achievements', icon: Award },
+            ].map((item) => {
+              const Icon = item.icon;
+              const isActive = currentTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setCurrentTab(item.id as Tab)}
+                  className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left transition-all ${isActive 
+                    ? 'bg-white/10 text-white shadow-inner' 
+                    : 'hover:bg-white/5 text-slate-400 hover:text-white'}`}
+                >
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-[#00DC82]' : ''}`} />
+                  <span className="font-medium">{item.label}</span>
+                  {isActive && <div className="ml-auto w-1.5 h-1.5 bg-[#00DC82] rounded-full animate-pulse" />}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="p-4 border-t border-white/10 mt-auto">
+            <div className="bg-white/5 rounded-3xl p-4 text-xs">
+              <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="text-[#00DC82]">
+                    <Zap className="w-4 h-4" />
+                  </div>
+                  <span className="font-semibold">{xp} XP</span>
+                </div>
+                <div className="flex items-center gap-1 text-orange-400">
+                  <span className="font-mono text-lg font-semibold tracking-tighter">{streak}</span>
+                  <span>🔥</span>
+                </div>
+              </div>
+              
+              <div className="h-2 bg-white/10 rounded-3xl overflow-hidden mb-1">
+                <div 
+                  className="h-full bg-gradient-to-r from-[#00DC82] to-emerald-400 transition-all" 
+                  style={{ width: `${Math.min((xp % 100), 100)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-slate-400">
+                <div>Level {Math.floor(xp / 100) + 1}</div>
+                <div>{100 - (xp % 100)} to next</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between mt-6 px-2">
+              <button 
+                onClick={() => setIsDark(!isDark)}
+                className="flex items-center justify-center w-9 h-9 rounded-2xl hover:bg-white/10 transition-colors"
+              >
+                {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+              <div className="flex items-center gap-2 text-xs">
+                <div className="w-7 h-7 bg-white/10 rounded-2xl flex items-center justify-center text-[#00DC82] font-bold">S</div>
+                <div>
+                  <div className="font-medium leading-none">Shreya</div>
+                  <div className="text-slate-500 text-[10px]">NEET • 2026</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 overflow-auto bg-[#0F172A]">
+          <header className="h-16 border-b border-white/10 bg-slate-950/70 backdrop-blur-2xl flex items-center px-8 z-30 sticky top-0">
+            <div className="flex-1 flex items-center gap-4">
+              <div className="text-sm font-medium text-slate-400">Preparing for NEET • 87 days left</div>
+            </div>
+            
+            <div className="flex items-center gap-8 text-sm">
+              <div className="flex items-center gap-6">
+                <div onClick={() => setCurrentTab('checkin')} className="flex items-center gap-2 cursor-pointer hover:text-[#00DC82] transition-colors">
+                  <Calendar className="w-4 h-4" /> <span className="hidden md:inline">Log Today</span>
+                </div>
+                <div className="h-3 w-px bg-white/20" />
+                <div className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                  <div className="text-xl">🌿</div>
+                  <div>Resilient Student</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 bg-white/5 text-xs rounded-3xl pl-2 pr-5 py-1 cursor-pointer" onClick={() => setCurrentTab('achievements')}>
+                <div className="bg-emerald-500 text-emerald-950 text-[17px] w-6 h-6 flex items-center justify-center rounded-2xl">🏆</div>
+                <div>5 Badges</div>
+              </div>
+            </div>
+          </header>
+
+          <div className="p-8 max-w-[1200px]">
+            <AnimatePresence mode="wait">
+              {/* DASHBOARD */}
+              {currentTab === 'dashboard' && (
+                <motion.div
+                  key="dashboard"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="space-y-8"
+                >
+                  <div>
+                    <div className="flex justify-between items-end mb-2">
+                      <div>
+                        <div className="text-emerald-400 text-sm font-medium tracking-widest">WELCOME BACK</div>
+                        <h1 className="text-5xl font-semibold tracking-tighter">Good morning, Shreya</h1>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-slate-400">CURRENT BURNOUT RISK</div>
+                        <div className={`inline-flex items-center gap-2 text-3xl font-semibold mt-1 ${burnoutRisk === 'high' ? 'text-red-400' : burnoutRisk === 'medium' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {burnoutRisk.toUpperCase()}
+                          <div className={`text-xs px-3 py-1 rounded-3xl ${burnoutRisk === 'high' ? 'bg-red-500/20 text-red-400' : burnoutRisk === 'medium' ? 'bg-amber-400/20 text-amber-400' : 'bg-emerald-400/20 text-emerald-400'}`}>
+                            {burnoutRisk === 'high' ? '⚠️' : burnoutRisk === 'medium' ? '🟠' : '✅'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-slate-400 max-w-md">Your weekly resilience score is up 14% from last week.</p>
+                  </div>
+
+                  {/* Quick Check In */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <div className="lg:col-span-7 bg-white/5 border border-white/10 rounded-3xl p-8">
+                      <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-3">
+                          <div className="text-2xl">🌅</div>
+                          <div>
+                            <div className="font-semibold text-lg">How are you feeling right now?</div>
+                            <div className="text-xs text-slate-400">Quick mood check-in • Takes 20 seconds</div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setCurrentTab('checkin')}
+                          className="text-xs bg-white/10 hover:bg-white/20 px-5 py-2 rounded-2xl transition-colors"
+                        >
+                          FULL LOG →
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-6 gap-3">
+                        {MOODS.map((mood) => (
+                          <motion.button
+                            whileHover={{ scale: 1.08, y: -4 }}
+                            whileTap={{ scale: 0.95 }}
+                            key={mood.value}
+                            onClick={() => {
+                              setSelectedMood(mood.value);
+                              setCurrentTab('checkin');
+                            }}
+                            className={`aspect-square flex flex-col items-center justify-center rounded-3xl transition-all border border-white/10 hover:border-white/30 ${selectedMood === mood.value ? 'ring-2 ring-offset-4 ring-offset-slate-950 ring-[#00DC82]' : ''}`}
+                          >
+                            <div className="text-5xl mb-3">{mood.emoji}</div>
+                            <div className="text-xs font-medium text-slate-300">{mood.label}</div>
+                          </motion.button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Live Stats */}
+                    <div className="lg:col-span-5 space-y-6">
+                      <div className="bg-white/5 border border-white/10 rounded-3xl p-6 h-full flex flex-col">
+                        <div className="flex justify-between">
+                          <div>
+                            <div className="uppercase text-xs tracking-widest text-slate-400">THIS WEEK</div>
+                            <div className="text-6xl font-semibold text-white mt-1 tabular-nums">{moodTrendData.length}</div>
+                            <div className="text-emerald-400 text-sm">days tracked</div>
+                          </div>
+                          <div className="text-right self-end">
+                            <div className="text-xs px-4 py-1 bg-white/10 rounded-3xl inline-block">+2 from last week</div>
+                          </div>
+                        </div>
+                        
+                        <div className="mt-auto pt-8">
+                          <ResponsiveContainer width="100%" height={92}>
+                            <LineChart data={moodTrendData}>
+                              <CartesianGrid strokeDasharray="2 2" stroke="#334155" />
+                              <XAxis dataKey="day" stroke="#64748B" fontSize={10} />
+                              <YAxis hide />
+                              <Tooltip />
+                              <Line type="natural" dataKey="moodScore" stroke="#00DC82" strokeWidth={3} dot={{ fill: '#00DC82', r: 4 }} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* AI Insight */}
+                    <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-[#00DC82]/30 rounded-3xl p-8 relative overflow-hidden">
+                      <div className="flex gap-4">
+                        <div className="mt-1">💡</div>
+                        <div className="flex-1">
+                          <div className="uppercase text-xs text-[#00DC82] font-semibold tracking-[0.5px]">GEMINI INSIGHT</div>
+                          <div className="text-2xl leading-tight font-medium mt-3 text-balance">
+                            {recentInsight}
+                          </div>
+                          <div className="text-xs text-slate-400 mt-8">Based on your last 12 entries • Updated moments ago</div>
+                        </div>
+                      </div>
+                      <div className="absolute bottom-6 right-6 text-[120px] opacity-10">🧠</div>
+                    </div>
+
+                    {/* Current Streak & Risk */}
+                    <div className="rounded-3xl border border-white/10 bg-white/5 p-8 flex flex-col">
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm text-emerald-400">YOUR HOT STREAK 🔥</div>
+                            <div className="text-[92px] font-bold text-white leading-none mt-1 tracking-tighter">{streak}</div>
+                            <div className="-mt-4 text-slate-400">days in a row</div>
+                          </div>
+                          <div className="text-7xl">🏅</div>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setCurrentTab('analytics')}
+                        className="mt-auto flex items-center justify-center gap-2 bg-white text-slate-900 hover:bg-amber-300 transition-all py-4 rounded-2xl font-semibold text-sm active:scale-[0.985]"
+                      >
+                        SEE FULL PROGRESS REPORT <BarChart3 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Recent Entries */}
+                  <div>
+                    <div className="flex items-center justify-between mb-5">
+                      <div className="font-semibold text-lg flex items-center gap-2">
+                        <span>Recent Activity</span>
+                        <span className="text-xs bg-white/10 px-3 py-0.5 rounded-3xl text-slate-400">LAST 30 DAYS</span>
+                      </div>
+                      <button onClick={() => setCurrentTab('journal')} className="text-xs flex items-center gap-2 text-slate-400 hover:text-white">
+                        ALL ENTRIES <span className="text-base">→</span>
+                      </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {moodEntries.slice(0, 3).map((entry, index) => (
+                        <motion.div 
+                          key={entry.id}
+                          initial={{ opacity: 0, y: 30 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="bg-white/5 border border-white/10 rounded-3xl p-6"
+                        >
+                          <div className="flex justify-between">
+                            <div className="text-4xl">{getMoodEmoji(entry.mood)}</div>
+                            <div className="text-xs text-right">
+                              <div className="font-mono text-slate-400">{format(parseISO(entry.timestamp), 'MMM dd')}</div>
+                              <div className={`text-xs mt-1 inline-block px-3 py-px rounded-full ${entry.stressLevel > 7 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-400/10 text-emerald-400'}`}>
+                                {entry.stressLevel}/10
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="mt-6 text-sm text-slate-400">
+                            Slept {entry.sleepHours}h • Studied {entry.studyHours}h
+                          </div>
+                          <div className="text-xs text-slate-500 mt-6 font-mono">
+                            ENERGY {entry.energyLevel} • RESILIENCE {Math.round(100 - entry.stressLevel * 6)}
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* CHECK-IN */}
+              {currentTab === 'checkin' && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="max-w-2xl mx-auto"
+                >
+                  <div className="mb-12">
+                    <div className="inline-flex items-center rounded-3xl bg-white/5 px-5 py-2 text-xs tracking-widest text-emerald-400">DAILY LOG</div>
+                    <h2 className="text-6xl font-semibold tracking-tighter mt-3">How did today feel?</h2>
+                    <p className="text-slate-400 mt-3 text-lg">Be honest. The AI learns your patterns over time.</p>
+                  </div>
+
+                  <div className="bg-white/5 border border-white/10 rounded-3xl p-10">
+                    <div className="text-center mb-10">
+                      <div className="text-xs uppercase mb-4 text-slate-400">SELECT MOOD</div>
+                      <div className="flex justify-center gap-6">
+                        {MOODS.map(mood => (
+                          <button
+                            key={mood.value}
+                            onClick={() => setSelectedMood(mood.value)}
+                            className={`text-7xl transition-all duration-200 p-4 rounded-3xl ${selectedMood === mood.value ? 'scale-125 bg-white/10' : 'hover:scale-110'}`}
+                          >
+                            {mood.emoji}
+                          </button>
+                        ))}
+                      </div>
+                      {selectedMood && (
+                        <div className="mt-4 text-xl font-medium text-emerald-300">
+                          {MOODS.find(m => m.value === selectedMood)?.label}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-10">
+                      <div>
+                        <div className="flex justify-between text-xs mb-3 text-slate-400">
+                          <div>STRESS LEVEL</div>
+                          <div className="font-mono text-lg text-white">{stressLevel}</div>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="10" 
+                          value={stressLevel}
+                          onChange={(e) => setStressLevel(parseInt(e.target.value))}
+                          className="w-full accent-[#00DC82]"
+                        />
+                        <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                          <div>CHILL</div>
+                          <div>OVERWHELMED</div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs mb-3 text-slate-400">
+                          <div>ENERGY LEVEL</div>
+                          <div className="font-mono text-lg text-white">{energyLevel}</div>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="10" 
+                          value={energyLevel}
+                          onChange={(e) => setEnergyLevel(parseInt(e.target.value))}
+                          className="w-full accent-[#00DC82]"
+                        />
+                        <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                          <div>DRAINED</div>
+                          <div>CHARGED</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-8">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-2">SLEEP LAST NIGHT (HOURS)</label>
+                          <div className="flex items-center gap-4 bg-white/5 rounded-2xl px-6 h-14">
+                            <input 
+                              type="number" 
+                              value={sleepHours} 
+                              onChange={(e) => setSleepHours(parseFloat(e.target.value) || 0)}
+                              className="bg-transparent text-4xl font-light w-16 focus:outline-none" 
+                              step="0.5"
+                            />
+                            <span className="text-slate-400">hrs</span>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-2">STUDY HOURS TODAY</label>
+                          <div className="flex items-center gap-4 bg-white/5 rounded-2xl px-6 h-14">
+                            <input 
+                              type="number" 
+                              value={studyHours} 
+                              onChange={(e) => setStudyHours(parseFloat(e.target.value) || 0)}
+                              className="bg-transparent text-4xl font-light w-16 focus:outline-none" 
+                              step="0.5"
+                            />
+                            <span className="text-slate-400">hrs</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={handleMoodSubmit}
+                        disabled={!selectedMood}
+                        className="w-full disabled:grayscale h-16 bg-[#00DC82] hover:bg-emerald-300 active:bg-emerald-400 disabled:bg-white/20 text-slate-950 rounded-3xl font-semibold text-xl transition-all flex items-center justify-center gap-3 shadow-xl shadow-emerald-500/40"
+                      >
+                        SAVE MOOD ENTRY +10XP <span className="text-2xl">🌟</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="text-center text-xs text-slate-500 mt-8">All entries are stored privately on your device</div>
+                </motion.div>
+              )}
+
+              {/* JOURNAL */}
+              {currentTab === 'journal' && (
+                <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl mx-auto">
+                  <div className="mb-8">
+                    <h2 className="text-5xl font-semibold tracking-tight">Emotional Journal</h2>
+                    <p className="text-slate-400 mt-2">Write freely. Our AI will gently reflect, detect triggers, and give you personalized advice.</p>
+                  </div>
+
+                  <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                    <textarea
+                      value={journalContent}
+                      onChange={(e) => setJournalContent(e.target.value)}
+                      className="w-full h-64 bg-transparent focus:outline-none text-lg placeholder:text-slate-500 resize-none"
+                      placeholder="Today I feel... The mock test didn't go as planned. I'm scared I'll let my parents down..."
+                    />
+                    
+                    <div className="flex justify-end gap-4 mt-6">
+                      <button 
+                        onClick={() => setJournalContent('')}
+                        className="px-8 py-3.5 text-sm border border-white/30 hover:bg-white/5 rounded-2xl"
+                      >
+                        CLEAR
+                      </button>
+                      <button 
+                        onClick={handleJournalSubmit}
+                        disabled={isAnalyzing || !journalContent.trim()}
+                        className="px-10 py-3.5 bg-white text-black rounded-2xl flex items-center gap-3 font-medium disabled:opacity-40 transition-all active:scale-95"
+                      >
+                        {isAnalyzing ? "ANALYZING WITH GEMINI..." : "ANALYZE WITH AI"}
+                        <Brain className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {journalEntries.length > 0 && (
+                    <div className="mt-16">
+                      <div className="text-xs uppercase tracking-widest mb-6 text-slate-400 px-1">PREVIOUS ENTRIES • GEMINI ANALYSIS</div>
+                      
+                      {journalEntries.map((journal) => (
+                        <div key={journal.id} className="mb-12 bg-white/5 border border-white/10 rounded-3xl p-8">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-medium text-lg">{journal.analysis.primaryEmotion}</div>
+                              <div className="text-xs text-slate-400 mt-1">{format(parseISO(journal.timestamp), 'EEEE, dd MMMM yyyy • h:mm a')}</div>
+                            </div>
+                            
+                            <div className={`px-6 py-2 text-xs rounded-3xl font-medium ${journal.analysis.burnoutRisk === 'high' ? 'bg-red-400/10 text-red-400' : journal.analysis.burnoutRisk === 'medium' ? 'bg-amber-400/10 text-amber-400' : 'bg-emerald-400/10 text-emerald-400'}`}>
+                              {journal.analysis.burnoutRisk.toUpperCase()} RISK
+                            </div>
+                          </div>
+
+                          <div className="my-8 border-l-2 border-white/30 pl-6 text-slate-300 text-[15px] leading-relaxed">
+                            “{journal.content}”
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-x-16 gap-y-8 text-sm">
+                            <div>
+                              <div className="text-xs text-slate-400 mb-2">SUMMARY</div>
+                              <div>{journal.analysis.summary}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-slate-400 mb-3">SUGGESTIONS</div>
+                              <ul className="space-y-3">
+                                {journal.analysis.suggestions.map((suggestion, i) => (
+                                  <li key={i} className="flex gap-3 text-xs">
+                                    <span className="text-emerald-400 mt-1">↳</span>
+                                    <span>{suggestion}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+
+                          {journal.analysis.triggers && journal.analysis.triggers.length > 0 && (
+                            <div className="mt-8 pt-8 border-t border-white/10">
+                              <div className="text-xs uppercase text-slate-400 mb-4">IDENTIFIED TRIGGERS</div>
+                              <div className="flex gap-2">
+                                {journal.analysis.triggers.map((trigger, i) => (
+                                  <div key={i} className="text-xs border border-white/30 px-4 py-2 rounded-3xl">{trigger}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* AI COACH */}
+              {currentTab === 'coach' && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto">
+                  <div className="mb-6 flex items-center gap-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-violet-400 to-fuchsia-500 rounded-2xl flex items-center justify-center text-3xl">🧘🏻‍♀️</div>
+                    <div>
+                      <div className="font-semibold text-3xl">Your Personal AI Coach</div>
+                      <div className="text-emerald-400 text-sm">Powered by Gemini 2.5 Pro • Always listening</div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white/5 border border-white/10 rounded-3xl h-[560px] flex flex-col overflow-hidden">
+                    {/* Chat header */}
+                    <div className="px-7 py-5 border-b border-white/10 flex items-center justify-between bg-black/30">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-white rounded-2xl flex items-center justify-center text-xl">🌼</div>
+                        <div>
+                          <div className="font-semibold">Priya • Wellness Companion</div>
+                          <div className="text-xs text-emerald-400">online • trained on student mental health</div>
+                        </div>
+                      </div>
+                      <div className="text-xs px-4 py-1 rounded-full border border-emerald-400/30 text-emerald-400">SAFETY PROTOCOLS ENABLED</div>
+                    </div>
+
+                    {/* Messages */}
+                    <div className="flex-1 p-7 overflow-auto space-y-8" id="chat-window">
+                      {chatMessages.map((msg) => (
+                        <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                          {msg.role === 'assistant' && (
+                            <div className="w-8 h-8 bg-gradient-to-br from-purple-400 to-pink-400 rounded-2xl flex-shrink-0 mr-4 mt-1 flex items-center justify-center text-sm">P</div>
+                          )}
+                          <div className={`max-w-[80%] rounded-3xl px-6 py-4 text-sm leading-relaxed ${msg.role === 'user' 
+                            ? 'bg-[#00DC82] text-black' 
+                            : 'bg-white/10'}`}>
+                            {msg.content}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Input area */}
+                    <div className="p-5 border-t border-white/10 bg-black/40">
+                      <div className="flex gap-3">
+                        <input
+                          type="text"
+                          value={currentChatInput}
+                          onChange={(e) => setCurrentChatInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()}
+                          placeholder="Ask anything... breathing tips, study anxiety, motivation..."
+                          className="flex-1 bg-white/10 border border-white/20 focus:border-white/40 rounded-3xl px-7 py-5 text-sm outline-none placeholder:text-slate-400"
+                        />
+                        <button 
+                          onClick={sendChatMessage}
+                          className="bg-white text-black px-10 rounded-3xl font-medium active:bg-amber-200 transition-colors"
+                        >
+                          SEND
+                        </button>
+                      </div>
+                      <div className="text-center text-[10px] text-slate-500 mt-4">Remember: This is not a substitute for professional mental health support</div>
+                    </div>
+                  </div>
+
+                  {showEmergency && (
+                    <div className="mt-6 bg-red-500/10 border border-red-400/60 rounded-3xl p-8 text-center">
+                      <div className="mx-auto w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center text-4xl mb-6">🛟</div>
+                      <div className="font-semibold text-2xl text-red-400">You are not alone</div>
+                      <p className="text-slate-300 max-w-xs mx-auto mt-4">If you are in crisis, please speak to someone immediately. Professional help is available 24/7.</p>
+                      <div className="flex flex-col gap-3 mt-8 text-left max-w-xs mx-auto text-sm">
+                        <a href="#" className="block bg-white/5 hover:bg-white/10 transition-colors p-4 rounded-2xl">📞 iCALL Helpline - 9152987821</a>
+                        <a href="#" className="block bg-white/5 hover:bg-white/10 transition-colors p-4 rounded-2xl">📞 AASRA - 9820466726</a>
+                        <a href="#" className="block bg-white/5 hover:bg-white/10 transition-colors p-4 rounded-2xl">Talk to your parents or a teacher today</a>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* ANALYTICS */}
+              {currentTab === 'analytics' && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+                  <h2 className="text-4xl font-semibold tracking-tight">Your Mental Health Trends</h2>
+                  
+                  <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+                    {/* Mood Trend */}
+                    <div className="xl:col-span-3 bg-white/5 border border-white/10 rounded-3xl p-8">
+                      <div className="flex items-center justify-between mb-8">
+                        <div>
+                          <div className="font-semibold">Mood &amp; Energy Trend</div>
+                          <div className="text-xs text-slate-400">Last 7 logged days</div>
+                        </div>
+                        <div className="text-xs px-4 py-2 bg-white/10 rounded-3xl">RECHARTS</div>
+                      </div>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={moodTrendData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1F2937" />
+                          <XAxis dataKey="day" stroke="#64748b" />
+                          <YAxis stroke="#64748b" domain={[0, 100]} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="moodScore" stroke="#22c55e" name="Mood Score" strokeWidth={4} />
+                          <Line type="monotone" dataKey="energy" stroke="#a5f3fc" name="Energy" strokeWidth={2.5} strokeDasharray="2 2" />
+                          <Line type="monotone" dataKey="stress" stroke="#f87171" name="Stress" strokeWidth={2} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Mood Breakdown */}
+                    <div className="xl:col-span-2 bg-white/5 border border-white/10 rounded-3xl p-8 flex flex-col">
+                      <div className="font-semibold mb-6">Mood Distribution</div>
+                      <div className="flex-1 flex items-center justify-center">
+                        <ResponsiveContainer width="100%" height={260}>
+                          <PieChart>
+                            <Pie
+                              data={moodDistribution}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={72}
+                              outerRadius={110}
+                              dataKey="value"
+                            >
+                              {moodDistribution.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs mt-2">
+                        {moodDistribution.map((entry, i) => (
+                          <div key={i} className="flex items-center gap-3">
+                            <div className="w-3 h-3 rounded" style={{ backgroundColor: entry.color }}></div>
+                            <div>{entry.name}</div>
+                            <div className="ml-auto font-mono text-slate-400">×{entry.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-6">
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                      <div className="uppercase text-xs text-slate-400">AVERAGE STRESS</div>
+                      <div className="text-[92px] font-light text-white tracking-tighter leading-none mt-1">{avgStress}</div>
+                      <div className="text-sm text-rose-400">out of 10</div>
+                      <div className="h-2 mt-8 bg-white/10 rounded-full">
+                        <div className="bg-rose-400 h-2 rounded-full w-3/4"></div>
+                      </div>
+                    </div>
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+                      <div className="uppercase text-xs text-slate-400">AVG SLEEP</div>
+                      <div className="text-[92px] font-light text-white tracking-tighter leading-none mt-1">{avgSleep}</div>
+                      <div className="text-emerald-400">hours</div>
+                      <div className="mt-8 text-xs leading-snug text-slate-400">Students who sleep 7.5+ hours report 61% better mood scores.</div>
+                    </div>
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-8 relative">
+                      <div className="uppercase text-xs text-slate-400">RESILIENCE INDEX</div>
+                      <div className="text-[92px] font-light text-white tracking-tighter leading-none mt-1">74</div>
+                      <div className="text-emerald-400">+11 this month</div>
+                      
+                      <div className="absolute bottom-8 right-8 text-8xl opacity-10">🪴</div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* WELLNESS PLANS */}
+              {currentTab === 'plans' && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <div className="flex items-end justify-between mb-8">
+                    <div>
+                      <h2 className="font-semibold text-5xl tracking-tight">Your Personalized Plans</h2>
+                      <p className="text-slate-400">Dynamically generated from your mood logs and journals</p>
+                    </div>
+                    <button 
+                      onClick={generateNewPlan}
+                      className="flex items-center gap-3 bg-white/10 hover:bg-white/20 transition-colors px-7 py-4 rounded-3xl text-sm font-medium"
+                    >
+                      <span>GENERATE NEW PLAN</span>
+                      <Zap className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {wellnessPlans.map(plan => (
+                      <div key={plan.id} className="bg-white/5 border border-white/10 rounded-3xl overflow-hidden">
+                        <div className="p-8 pb-6">
+                          <div className="uppercase text-xs text-emerald-400 tracking-widest mb-2">WELLNESS PROTOCOL</div>
+                          <div className="text-3xl font-medium leading-none">{plan.title}</div>
+                          <div className="text-xs mt-4 text-slate-400">{plan.generatedFor}</div>
+                        </div>
+
+                        <div className="px-8 pb-8 space-y-4">
+                          {plan.tasks.map((task, index) => (
+                            <div 
+                              key={index}
+                              onClick={() => toggleTask(plan.id, index)}
+                              className={`flex gap-4 items-start px-5 py-4 rounded-2xl transition-all cursor-pointer ${task.completed ? 'bg-emerald-900/30 line-through opacity-70' : 'bg-white/5 hover:bg-white/10'}`}
+                            >
+                              <input 
+                                type="checkbox" 
+                                checked={task.completed} 
+                                className="mt-1 accent-emerald-400" 
+                                readOnly
+                              />
+                              <div className="flex-1 text-sm">
+                                {task.title}
+                                {task.duration && <div className="text-xs text-slate-400 mt-px">{task.duration}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        <div className="bg-black/30 px-8 py-5 text-xs flex items-center justify-between text-slate-400 border-t border-white/10">
+                          <div>3 of 4 completed</div>
+                          <div className="text-emerald-400 cursor-pointer" onClick={() => generateNewPlan()}>REGENERATE →</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ACHIEVEMENTS */}
+              {currentTab === 'achievements' && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-4xl mx-auto">
+                  <div className="mb-12">
+                    <div className="flex items-center gap-4">
+                      <Award className="text-yellow-400 w-9 h-9" />
+                      <h1 className="text-5xl font-bold tracking-tighter">Achievements &amp; Growth</h1>
+                    </div>
+                    <p className="text-slate-400 mt-4">Milestones that represent your commitment to mental wellness</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {achievements.map((achievement) => (
+                      <div 
+                        key={achievement.id} 
+                        className={`group relative border rounded-3xl p-8 transition-all flex flex-col ${achievement.unlocked ? 'border-yellow-400/60 bg-yellow-400/5' : 'border-white/10 bg-white/5'}`}
+                      >
+                        <div className="text-6xl mb-8 transition-transform group-hover:scale-110">{achievement.icon}</div>
+                        
+                        <div className={`font-semibold text-2xl ${achievement.unlocked ? 'text-yellow-300' : 'text-slate-400 group-hover:text-slate-200'}`}>
+                          {achievement.name}
+                        </div>
+                        <div className="text-sm mt-3 text-slate-400 flex-1">{achievement.description}</div>
+                        
+                        {achievement.progress !== undefined && (
+                          <div className="mt-8">
+                            <div className="h-1.5 bg-white/10 rounded-3xl overflow-hidden">
+                              <div 
+                                className={`h-full ${achievement.unlocked ? 'bg-yellow-400' : 'bg-white/40'}`} 
+                                style={{width: `${Math.round(((achievement.progress || 0) / (achievement.maxProgress || 10)) * 100)}%`}}
+                              />
+                            </div>
+                            <div className="text-xs text-right mt-2 font-mono text-slate-500">
+                              {achievement.progress} / {achievement.maxProgress}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {achievement.unlocked && (
+                          <div className="absolute top-6 right-6 text-xs px-4 py-1 rounded-3xl bg-yellow-400 text-black font-medium tracking-wider">UNLOCKED</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-20 text-center">
+                    <div className="mx-auto max-w-xs bg-white/5 border border-white/10 rounded-3xl p-8">
+                      <div className="text-6xl mb-6">🌟</div>
+                      <div className="font-semibold">Keep logging. The more consistent you are the more accurate your insights become.</div>
+                      <div className="text-xs mt-8 text-slate-400">Next possible unlock: 30 day streak</div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
